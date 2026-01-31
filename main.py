@@ -160,7 +160,8 @@ def run_daily():
     all_items.sort(key=lambda x: x.get("datetime",""), reverse=True)
 
     html = llm_analyze(openai_key, openai_model, tickers, all_items, mode="daily")
-    subject = f"Daily Portfolio Briefing — {datetime.now().strftime('%Y-%m-%d')}"
+    subject = f"Daily Portfolio Briefing - {datetime.now().strftime('%Y-%m-%d')}"
+
     send_email(sendgrid_key, from_email, to_email, subject, html)
 
 def run_breaking():
@@ -201,7 +202,7 @@ def run_breaking():
     if "NO ALERT" in html and "ALERT" not in html:
         return
 
-    subject = f"⚠️ Portfolio Alert — {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}"
+    subject = f"Daily Portfolio Briefing - {datetime.now().strftime('%Y-%m-%d')}"
     send_email(sendgrid_key, from_email, to_email, subject, html)
 
 if __name__ == "__main__":
