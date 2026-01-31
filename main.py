@@ -63,11 +63,12 @@ def item_id(item):
 def send_email(sendgrid_key, from_email, to_email, subject, content):
     sg = SendGridAPIClient(sendgrid_key)
     message = Mail(
-        from_email=from_email,
-        to_emails=to_email,
-        subject=subject,
-        html_content=content
-    )
+    from_email=from_email,
+    to_emails=to_email,
+    subject=subject,
+    plain_text_content=content
+)
+
     sg.send(message)
 
 def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
@@ -126,9 +127,7 @@ def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
     text = resp.choices[0].message.content
 
     # Simple HTML wrapper
-    return "<pre style='font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; white-space: pre-wrap;'>" + \
-           text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;") + \
-           "</pre>"
+    return text
 
 def run_daily():
     finnhub_key = env("FINNHUB_API_KEY", required=True)
