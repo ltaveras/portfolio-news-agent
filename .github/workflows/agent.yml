@@ -1,0 +1,47 @@
+name: Portfolio News Agent
+
+on:
+  schedule:
+    # Daily briefing at 7:00 AM Miami (EST = UTC-5) => 12:00 UTC
+    - cron: "0 12 * * *"
+
+    # Breaking news every 20 minutes
+    - cron: "*/20 * * * *"
+
+  workflow_dispatch: {}
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily or breaking based on schedule time
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          TICKERS: ${{ secrets.TICKERS }}
+          OPENAI_MODEL: "gpt-4o-mini"
+        run: |
+          # Decide which mode to run:
+          # If it's exactly 12:00 UTC, run daily; otherwise run breaking
+          NOW_UTC=$(date -u +"%H:%M")
+          if [ "$NOW_UTC" = "12:00" ]; then
+            export MODE="daily"
+          else
+            export MODE="breaking"
+          fi
+          python main.py
