@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run daily or breaking based on schedule time
+      - name: Run agent
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -36,12 +36,17 @@ jobs:
           TICKERS: ${{ secrets.TICKERS }}
           OPENAI_MODEL: "gpt-4o-mini"
         run: |
-          # Decide which mode to run:
-          # If it's exactly 12:00 UTC, run daily; otherwise run breaking
-          NOW_UTC=$(date -u +"%H:%M")
-          if [ "$NOW_UTC" = "12:00" ]; then
+          # If manually triggered, run DAILY so you always get an email.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             export MODE="daily"
           else
-            export MODE="breaking"
+            # Scheduled runs:
+            NOW_UTC=$(date -u +"%H:%M")
+            if [ "$NOW_UTC" = "12:00" ]; then
+              export MODE="daily"
+            else
+              export MODE="breaking"
+            fi
           fi
           python main.py
+
