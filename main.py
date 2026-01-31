@@ -62,19 +62,20 @@ def item_id(item):
 
 def send_email(sendgrid_key, from_email, to_email, subject, content):
     sg = SendGridAPIClient(sendgrid_key)
-    message = Mail(
-    from_email=from_email,
-    to_emails=to_email,
-    subject=subject,
-    plain_text_content=content
-)
+        message = Mail(
+        from_email=from_email,
+        to_emails=to_email,
+        subject=subject,
+        plain_text_content=content
+    )
+
 
     sg.send(message)
 
 def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
     """
     mode = "daily" or "breaking"
-    Returns HTML.
+   
     """
     client = OpenAI(api_key=openai_key)
 
@@ -126,7 +127,7 @@ def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
     )
     text = resp.choices[0].message.content
 
-    # Simple HTML wrapper
+  
     return text
 
 def run_daily():
