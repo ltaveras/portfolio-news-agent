@@ -62,14 +62,12 @@ def item_id(item):
 
 def send_email(sendgrid_key, from_email, to_email, subject, content):
     sg = SendGridAPIClient(sendgrid_key)
-        message = Mail(
+    message = Mail(
         from_email=from_email,
         to_emails=to_email,
         subject=subject,
         plain_text_content=content
     )
-
-
     sg.send(message)
 
 def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
