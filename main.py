@@ -1,8 +1,7 @@
-import os, json, time, hashlib
+import os, json, hashlib
 from datetime import datetime, timedelta, timezone
 
 import requests
-from dateutil import parser as dateparser
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from openai import OpenAI
@@ -11,14 +10,32 @@ TICKERS_DEFAULT = "UVIX,UUUU,URNJ,REMX,NLR,UFO,SMR,NUKZ,OKLO,ARKVX,INNOX"
 
 def env(name, default=None, required=False):
     v = os.getenv(name, default)
-    if required and not v:
+    if required and (v is None or str(v).strip() == ""):
         raise RuntimeError(f"Missing env var: {name}")
     return v
 
+def ascii_safe(s: str) -> str:
+    """
+    SendGrid (or underlying libs) can sometimes choke on certain unicode characters.
+    This makes the email safe by converting to basic ASCII.
+    """
+    if s is None:
+        return ""
+    # Normalize a few common punctuation marks first
+    s = (str(s)
+         .replace("—", "-")
+         .replace("–", "-")
+         .replace("“", '"')
+         .replace("”", '"')
+         .replace("’", "'")
+         .replace("\u00a0", " "))
+    # Drop any remaining non-ascii
+    return s.encode("ascii", errors="ignore").decode("ascii")
+
 def finnhub_news(api_key, symbol, lookback_hours=24):
-    # Finnhub company-news endpoint (works best for equities; ETFs sometimes have sparse news)
     to_dt = datetime.now(timezone.utc)
     from_dt = to_dt - timedelta(hours=lookback_hours)
+
     url = "https://finnhub.io/api/v1/company-news"
     params = {
         "symbol": symbol,
@@ -29,7 +46,7 @@ def finnhub_news(api_key, symbol, lookback_hours=24):
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
     items = r.json()
-    # Finnhub returns more than 24h sometimes due to date granularity; we filter precisely.
+
     filtered = []
     for it in items:
         dt = datetime.fromtimestamp(it.get("datetime", 0), tz=timezone.utc)
@@ -57,11 +74,21 @@ def save_seen(seen, path="seen.json"):
         json.dump(sorted(list(seen)), f)
 
 def item_id(item):
-    raw = (item.get("symbol","") + "|" + item.get("headline","") + "|" + item.get("datetime","") + "|" + item.get("url",""))
+    raw = (
+        item.get("symbol","") + "|" +
+        item.get("headline","") + "|" +
+        item.get("datetime","") + "|" +
+        item.get("url","")
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 def send_email(sendgrid_key, from_email, to_email, subject, content):
     sg = SendGridAPIClient(sendgrid_key)
+
+    # Make the email robust against unicode encoding issues
+    subject = ascii_safe(subject)
+    content = ascii_safe(content)
+
     message = Mail(
         from_email=from_email,
         to_emails=to_email,
@@ -71,45 +98,40 @@ def send_email(sendgrid_key, from_email, to_email, subject, content):
     sg.send(message)
 
 def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
-    """
-    mode = "daily" or "breaking"
-   
-    """
     client = OpenAI(api_key=openai_key)
 
-    # Keep payload compact
+    # Keep payload reasonable
     compact = news_items[:80]
 
     system = (
         "You are a portfolio intelligence analyst. You are advice-only. "
         "You monitor the user's tickers and produce actionable, non-hyped analysis. "
-        "You think 'outside the box': second-order effects, correlations, regulation, supply chain, dilution risk, "
+        "You think outside the box: second-order effects, correlations, regulation, supply chain, dilution risk, "
         "short interest dynamics, ETF structure risks, and macro sensitivity. "
-        "You must be explicit about uncertainty and what would change your view."
+        "Be explicit about uncertainty and what would change your view. "
+        "Do not fabricate events; use only the provided news items."
     )
 
     if mode == "daily":
-        user = {
-            "task": "Create a daily briefing for the user's tickers.",
+        user_obj = {
+            "task": "Create a daily briefing for the user's tickers based ONLY on the news_items provided.",
             "requirements": [
-                "Use only the provided news items; do not fabricate events.",
-                "Group by ticker; include 0–3 bullets each (skip tickers with no meaningful items).",
+                "Group by ticker; include 0–3 bullets each; skip tickers with no meaningful items.",
                 "Add an 'Outside-the-box insights' section connecting tickers/themes.",
                 "Add 'Recommendations (advice-only)' per ticker: Hold/Add/Trim/Avoid + 1–2 sentence rationale.",
-                "Add a 'Watch next' checklist (earnings, filings, catalysts to monitor).",
-                "Keep it concise, skimmable, and clear."
+                "Add a 'Watch next' checklist (earnings, filings, catalysts).",
+                "Keep it concise and skimmable."
             ],
             "tickers": tickers,
             "news_items": compact
         }
     else:
-        user = {
-            "task": "Decide whether this is important enough to alert the user now.",
+        user_obj = {
+            "task": "Decide whether this is important enough to alert the user now (advice-only). Use ONLY the news_items provided.",
             "requirements": [
                 "Score severity 0-100 (100 = immediate action).",
                 "If severity < 70, say 'NO ALERT' and give a 2 sentence rationale.",
-                "If severity >= 70, say 'ALERT' and provide: what happened, why it matters, what to do next (advice-only).",
-                "Do not fabricate; use only provided news items."
+                "If severity >= 70, say 'ALERT' and provide: what happened, why it matters, what to do next (advice-only)."
             ],
             "tickers": tickers,
             "news_items": compact
@@ -119,14 +141,11 @@ def llm_analyze(openai_key, model, tickers, news_items, mode="daily"):
         model=model,
         messages=[
             {"role":"system","content":system},
-            {"role":"user","content":json.dumps(user)}
+            {"role":"user","content":json.dumps(user_obj)}
         ],
         temperature=0.4
     )
-    text = resp.choices[0].message.content
-
-  
-    return text
+    return resp.choices[0].message.content
 
 def run_daily():
     finnhub_key = env("FINNHUB_API_KEY", required=True)
@@ -154,13 +173,11 @@ def run_daily():
                 "category": "error"
             })
 
-    # Sort by time desc
     all_items.sort(key=lambda x: x.get("datetime",""), reverse=True)
 
-    html = llm_analyze(openai_key, openai_model, tickers, all_items, mode="daily")
+    content = llm_analyze(openai_key, openai_model, tickers, all_items, mode="daily")
     subject = f"Daily Portfolio Briefing - {datetime.now().strftime('%Y-%m-%d')}"
-
-    send_email(sendgrid_key, from_email, to_email, subject, html)
+    send_email(sendgrid_key, from_email, to_email, subject, content)
 
 def run_breaking():
     finnhub_key = env("FINNHUB_API_KEY", required=True)
@@ -192,16 +209,15 @@ def run_breaking():
     if not new_items:
         return
 
-    # Analyze only new items
     new_items.sort(key=lambda x: x.get("datetime",""), reverse=True)
-    html = llm_analyze(openai_key, openai_model, tickers, new_items, mode="breaking")
+    content = llm_analyze(openai_key, openai_model, tickers, new_items, mode="breaking")
 
-    # If LLM says "NO ALERT" we skip emailing; otherwise send
-    if "NO ALERT" in html and "ALERT" not in html:
+    # If LLM says no alert, do nothing.
+    if "NO ALERT" in content and "ALERT" not in content:
         return
 
-    subject = f"Daily Portfolio Briefing - {datetime.now().strftime('%Y-%m-%d')}"
-    send_email(sendgrid_key, from_email, to_email, subject, html)
+    subject = f"Portfolio Alert - {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}"
+    send_email(sendgrid_key, from_email, to_email, subject, content)
 
 if __name__ == "__main__":
     mode = env("MODE", "daily").lower().strip()
